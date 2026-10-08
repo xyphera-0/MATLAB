@@ -1,0 +1,147 @@
+function [q] = invkin_subproblems_Dofbot(Rot,Pot)
+%INVKIN_SUBPROBLEMS_DOFBOT Computes the joint positions that result in the 
+% given end effector position (Pot) and orientation (Rot) relative to the 
+% base frame for Yahboom's Dofbot manipulator using canonical subproblems
+%   Input:
+%       Rot: The 3x3 rotation matrix describing the relative orientation of 
+%           the end effector frame to the base frame (R_{0T})
+%       Pot: The 3x1 vector describing the position of the end effector
+%           relative to the base, where the first element is the position 
+%           along the base frame x-axis, the second element is the position 
+%           along the base frame y-axis, and the third element is the 
+%           position along the base frame z-axis (P_{0T})
+%
+%   Output:
+%       q: 5x1 vector of joint angles in degrees
+%% Set up the basis unit vectors
+ex = [1;0;0]; %x axis
+ey = [0;1;0]; %y axis
+ez = [0;0;1]; %z axis
+
+%% Define the link lengths in meters
+l0 = 0.061;    %base to servo 1
+l1 = 0.0435;  %servo 1 to servo 2
+l2 = 0.08285; %servo 2 to servo 3
+l3 = 0.08285; %servo 3 to servo 4
+l4 = 0.07385; %servo 4 to servo 5
+l5 = 0.05457; %servo 5 to gripper 
+
+L1 = l0+l1;
+L4 = l4+l5;
+
+%% set up the position vectors between subsequent frames
+P01 = (l0+l1)*ez;   %translation between base frame and 1 frame in base frame
+P12 = zeros(3,1);   %translation between 1 and 2 frame in 1 frame
+P23 = l2*ex;        %translation between 2 and 3 frame in 2 frame
+P34 = -l3*ez;       %translation between 3 and 4 frame in 3 frame
+P45 = zeros(3,1);   %translation between 4 and 5 frame in 4 frame
+P5T = -(l4+l5)*ex;  %translation between 5 and tool frame in 5 frame
+
+%% set up placeholder for possible q sets
+q = nan*ones(5,4);
+
+%% get theta = q2+q3+q4 from Rot
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%if using SP4: uncomment the following
+    k = -ey ; h = ez ; p = ex ; d = ez'*Rot*ex ;
+    thetatmp = subprob4(k,h,p,d);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+if length(thetatmp)==1
+    theta = [thetatmp(1) nan thetatmp(1) nan];
+else
+    theta = [thetatmp(1) thetatmp(2) thetatmp(1) thetatmp(2)];
+end
+
+%% get q1 from Rot
+for ii = 1:4
+    if ~isnan(theta(ii))
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+        % Use theta(ii) in your computation of the vector
+        %if using SP1: uncomment the following:
+            k = ez ; p1 = rot(ey, -theta(ii))*ex ; p2 = Rot*ex ;
+            q(1,ii) = subprob1(k,p1,p2);
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    end
+end
+
+%% get q5 from Rot
+for ii = 1:4
+    if ~isnan(theta(ii))
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+        % Use theta(ii) in your computation of the vector
+        %if using SP1: uncomment the following:
+            k = ex ; p1 = rot(ey, theta(ii))*ez ; p2 = Rot'*ez ;
+            q(5,ii) = subprob1(k,p1,p2);
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    end
+end
+
+%% get q3 from Pot
+for ii = 1:2
+    if ~isnan(theta(ii))
+        Pprime = rot(ez,-q(1,ii))*(Pot-L1*ez)+rot(ey,-theta(ii))*L4*ex;
+        %input the subproblem terms below
+        % ||v|| = norm(v);
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+        %if using SP3: uncomment the following:
+            k = -ey ; p1 = l3*ez ; p2 = l2*ex ; d = norm(Pprime) ;
+            q3tmp = subprob3(k,p1,p2,d);
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+        if length(q3tmp)==1
+            q(3,ii) = q3tmp;
+        else
+            q(3,ii) = q3tmp(1);
+            q(3,ii+2) = q3tmp(2);
+        end
+    end
+end
+
+%% get q2 from Pot
+for ii = 1:4
+    if ~isnan(q(3,ii))
+        Pprime = rot(ez,-q(1,ii))*(Pot-L1*ez)+rot(ey,-theta(ii))*L4*ex;
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+        % if using SP1: uncomment the following:
+            k = -ey ; p1 = l2*ex - rot(ey, -q(3,ii))*l3*ez ; p2 = Pprime
+            q(2,ii) = subprob1(k,p1,p2);
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    end
+end
+
+%% get q4 from theta
+for ii = 1:4
+    if ~isnan(q(3,ii))
+        q(4,ii) = theta(ii)-q(2,ii)-q(3,ii);
+    end
+end
+
+%% remove nonvalid columns of q
+for ii = 4:-1:1
+    if sum(isnan(q(:,ii)))
+        q(:,ii) = [];
+    end
+end
+
+%convert q to degrees
+q = q*180/pi;
+
+for ii = 1:size(q,1)
+    for jj = 1:size(q,2)
+        if q(ii,jj)<-180
+            q(ii,jj) = q(ii,jj)+360;
+        elseif q(ii,jj)>360
+            q(ii,jj) = q(ii,jj)-360;
+        end
+    end
+end
